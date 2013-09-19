@@ -38,7 +38,9 @@ var databank = require("databank"),
     he = require("../lib/httperror"),
     Scrubber = require("../lib/scrubber"),
     finishers = require("../lib/finishers"),
-    saveUpload = require("../lib/saveupload").saveUpload,
+    su = require("../lib/saveupload"),
+    saveUpload = su.saveUpload,
+    saveAvatar = su.saveAvatar,
     streams = require("../lib/streams"),
     api = require("./api"),
     HTTPError = he.HTTPError,
@@ -59,7 +61,9 @@ var databank = require("databank"),
     firstFewReplies = finishers.firstFewReplies,
     firstFewShares = finishers.firstFewShares,
     addFollowed = finishers.addFollowed,
-    requestObject = omw.requestObject;
+    requestObject = omw.requestObject,
+    principalActorOrRecipient = omw.principalActorOrRecipient,
+    principalAuthorOrRecipient = omw.principalAuthorOrRecipient;
 
 var addRoutes = function(app) {
 
@@ -90,6 +94,7 @@ var addRoutes = function(app) {
     
     if (app.config.uploaddir) {
         app.post("/main/upload", app.session, principal, principalUserOnly, uploadFile);
+        app.post("/main/upload-avatar", app.session, principal, principalUserOnly, uploadAvatar);
     }
 
     app.get("/:nickname", app.session, principal, addMessages, reqUser, showStream);
@@ -246,11 +251,12 @@ var handleRemote = function(req, res, next) {
 
 var requestActivity = function(req, res, next) {
 
-    var uuid = req.params.uuid;
+    var uuid = req.params.uuid,
+        activity;
 
     Step(
         function() {
-            Activity.search({"_uuid": req.params.uuid}, this);
+            Activity.search({"_uuid": uuid}, this);
         },
         function(err, activities) {
             if (err) throw err;
@@ -258,11 +264,12 @@ var requestActivity = function(req, res, next) {
                 throw new NoSuchThingError("activity", uuid);
             }
             if (activities.length > 1) {
-                throw new Error("Too many activities with ID = " + req.params.uuid);
+                throw new Error("Too many activities with ID = " + uuid);
             }
-            activities[0].expand(this);
+            activity = activities[0];
+            activity.expand(this);
         },
-        function(err, activity) {
+        function(err) {
             if (err) {
                 next(err);
             } else {
@@ -278,38 +285,20 @@ var userIsActor = function(req, res, next) {
     var user = req.user,
         person = req.person,
         activity = req.activity,
-        actor = activity.actor;
+        actor;
+
+    if (!activity || !activity.actor) {
+        next(new HTTPError("No such activity", 404));
+        return;
+    }
+
+    actor = activity.actor;
 
     if (person && actor && person.id == actor.id) {
         next();
     } else {
-        next(new HTTPError("No " + type + " by " + user.nickname + " with uuid " + obj._uuid, 404));
+        next(new HTTPError("person " + person.id + " is not the actor of " + activity.id, 404));
         return;
-    }
-};
-
-var principalActorOrRecipient = function(req, res, next) {
-
-    var person = req.principal,
-        activity = req.activity;
-
-    if (activity && activity.actor && person && activity.actor.id == person.id) {
-        next();
-    } else {
-        Step(
-            function() {
-                activity.checkRecipient(person, this);
-            },
-            function(err, isRecipient) {
-                if (err) {
-                    next(err);
-                } else if (isRecipient) {
-                    next();
-                } else {
-                    next(new HTTPError("Only the author and recipients can view this activity.", 403));
-                }
-            }
-        );
     }
 };
 
@@ -334,7 +323,7 @@ var showStream = function(req, res, next) {
         function() {
             streams.userMajorStream({user: req.user}, req.principal, this.parallel());
             streams.userMinorStream({user: req.user}, req.principal, this.parallel());
-            addFollowed(principal, [req.user.profile], this.parallel());
+            addFollowed(req.principal, [req.user.profile], this.parallel());
             req.user.profile.expandFeeds(this.parallel());
         },
         function(err, major, minor) {
@@ -552,11 +541,11 @@ var showList = function(req, res, next) {
                                     profile: req.user.profile,
                                     lists: lists,
                                     list: list,
-                                    members: list.members.items,
+                                    members: list.members,
                                     data: {
                                         profile: req.user.profile,
                                         lists: lists,
-                                        members: list.members.items,
+                                        members: list.members,
                                         list: list}
                                    });
             }
@@ -564,56 +553,66 @@ var showList = function(req, res, next) {
     );
 };
 
-var uploadFile = function(req, res, next) {
+// uploadFile and uploadAvatar are almost identical except for the function
+// they use to save the file. So, this generator makes the two functions
 
-    var user = req.principalUser,
-        uploadDir = req.app.config.uploaddir,
-        mimeType,
-        fileName,
-        params = {};
+// XXX: if they diverge any more, make them separate functions
 
-    if (req.xhr) {
-        if (_.has(req.headers, "x-mime-type")) {
-            mimeType = req.headers["x-mime-type"];
-        } else {
-            mimeType = req.uploadMimeType;
-        }
-        fileName = req.uploadFile;
-        if (_.has(req.query, "title")) {
-            params.title = req.query.title;
-        }
-        if (_.has(req.query, "description")) {
-            params.description = Scrubber.scrub(req.query.description);
-        }
-    } else {
-        mimeType = req.files.qqfile.type;
-        fileName = req.files.qqfile.path;
-    }
+var uploader = function(saver) {
+    return function(req, res, next) {
 
-    req.log.info("Uploading " + fileName + " of type " + mimeType);
+        var user = req.principalUser,
+            uploadDir = req.app.config.uploaddir,
+            mimeType,
+            fileName,
+            params = {};
 
-    Step(
-        function() {
-            saveUpload(user, mimeType, fileName, uploadDir, params, this);
-        },
-        function(err, obj) {
-            var data;
-            if (err) {
-                req.log.error(err);
-                data = {"success": false,
-                        "error": "error message to display"};
-                res.send(JSON.stringify(data), {"Content-Type": "text/plain"}, 500);
+        if (req.xhr) {
+            if (_.has(req.headers, "x-mime-type")) {
+                mimeType = req.headers["x-mime-type"];
             } else {
-                req.log.info("Upload successful");
-                obj.sanitize();
-                req.log.info(obj);
-                data = {success: true,
-                        obj: obj};
-                res.send(JSON.stringify(data), {"Content-Type": "text/plain"}, 200);
+                mimeType = req.uploadMimeType;
             }
+            fileName = req.uploadFile;
+            if (_.has(req.query, "title")) {
+                params.title = req.query.title;
+            }
+            if (_.has(req.query, "description")) {
+                params.description = Scrubber.scrub(req.query.description);
+            }
+        } else {
+            mimeType = req.files.qqfile.type;
+            fileName = req.files.qqfile.path;
         }
-    );
+
+        req.log.info("Uploading " + fileName + " of type " + mimeType);
+
+        Step(
+            function() {
+                saver(user, mimeType, fileName, uploadDir, params, this);
+            },
+            function(err, obj) {
+                var data;
+                if (err) {
+                    req.log.error(err);
+                    data = {"success": false,
+                            "error": err.message};
+                    res.send(JSON.stringify(data), {"Content-Type": "text/plain"}, 500);
+                } else {
+                    req.log.info("Upload successful");
+                    obj.sanitize();
+                    req.log.info(obj);
+                    data = {success: true,
+                            obj: obj};
+                    res.send(JSON.stringify(data), {"Content-Type": "text/plain"}, 200);
+                }
+            }
+        );
+    };
 };
+
+var uploadFile = uploader(saveUpload);
+var uploadAvatar = uploader(saveAvatar);
 
 var userIsAuthor = function(req, res, next) {
     var user = req.user,
@@ -627,36 +626,6 @@ var userIsAuthor = function(req, res, next) {
     } else {
         next(new HTTPError("No " + type + " by " + user.nickname + " with uuid " + obj._uuid, 404));
         return;
-    }
-};
-
-var principalAuthorOrRecipient = function(req, res, next) {
-
-    var type = req.type,
-        obj = req[type],
-        person = req.principal;
-
-    if (obj && obj.author && person && obj.author.id == person.id) {
-        next();
-    } else {
-        Step(
-            function() {
-                Activity.postOf(obj, this);
-            },
-            function(err, act) {
-                if (err) throw err;
-                act.checkRecipient(person, this);
-            },
-            function(err, isRecipient) {
-                if (err) {
-                    next(err);
-                } else if (isRecipient) {
-                    next();
-                } else {
-                    next(new HTTPError("Only the author and recipients can view this object.", 403));
-                }
-            }
-        );
     }
 };
 
@@ -933,11 +902,13 @@ var handleRecover = function(req, res, next) {
 
     Step( 
         function () { 
+            req.log.info({nickname: nickname}, "checking for user to recover");
             User.get(nickname, this);
         },
         function(err, result) {
             if (err) {
                 if (err.name == "NoSuchThingError") {
+                    req.log.info({nickname: nickname}, "No such user, can't recover");
                     res.status(400);
                     res.json({sent: false, noSuchUser: true, error: "There is no user with that nickname."});
                     return;
@@ -947,14 +918,17 @@ var handleRecover = function(req, res, next) {
             }
             user = result;
             if (!user.email) {
+                req.log.info({nickname: nickname}, "User has no email address; can't recover.");
                 // Done
                 res.status(400);
                 res.json({sent: false, noEmail: true, error: "This user account has no email address."});
                 return;
             }
             if (force) {
+                req.log.info({nickname: nickname}, "Forcing recovery regardless of existing recovery records.");
                 this(null, []);
             } else {
+                req.log.info({nickname: nickname}, "Checking for existing recovery records.");
                 // Do they have any outstanding recovery requests?
                 Recovery.search({nickname: nickname, recovered: false}, this);
             }
@@ -963,25 +937,30 @@ var handleRecover = function(req, res, next) {
             var stillValid;
             if (err) throw err;
             if (!recoveries || recoveries.length === 0) {
+                req.log.info({nickname: nickname}, "No existing recovery records; continuing.");
                 this(null);
                 return;
             } 
             stillValid = _.filter(recoveries, function(reco) { return Date.now() - Date.parse(reco.timestamp) < Recovery.TIMEOUT; });
             if (stillValid.length > 0) {
+                req.log.info({nickname: nickname, count: stillValid.length}, "Have an existing, valid recovery record.");
                 // Done
                 res.status(409);
                 res.json({sent: false, existing: true, error: "You already requested a password recovery."});
             } else {
+                req.log.info({nickname: nickname}, "Have old recovery records but they're timed out.");
                 this(null);
             }
         },
         function(err) {
             if (err) throw err;
+            req.log.info({nickname: nickname}, "Creating a new recovery record.");
             Recovery.create({nickname: nickname}, this);
         },
         function(err, recovery) {
             var recoveryURL;
             if (err) throw err;
+            req.log.info({nickname: nickname}, "Generating recovery email output.");
             recoveryURL = URLMaker.makeURL("/main/recover/" + recovery.code);
             res.render("recovery-email-html",
                        {principal: user.profile,
@@ -1000,6 +979,7 @@ var handleRecover = function(req, res, next) {
         },
         function(err, html, text) {
             if (err) throw err;
+            req.log.info({nickname: nickname}, "Sending recovery email.");
             Mailer.sendEmail({to: user.email,
                               subject: "Recover password for " + req.app.config.site,
                               text: text,
@@ -1012,6 +992,7 @@ var handleRecover = function(req, res, next) {
             if (err) {
                 next(err);
             } else {
+                req.log.info({nickname: nickname}, "Finished with recovery");
                 res.json({sent: true});
             }
         }

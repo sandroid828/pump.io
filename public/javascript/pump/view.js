@@ -357,7 +357,12 @@
             view.$(".alert").alert();
         },
         showError: function(msg) {
-            this.showAlert(msg, "error");
+            var view = this;
+            if (view.$(".alert").length > 0) {
+                view.showAlert(msg, "error");
+            } else {
+                Pump.error(msg);
+            }
         },
         showSuccess: function(msg) {
             this.showAlert(msg, "success");
@@ -552,31 +557,37 @@
             "click #post-picture-button": "postPictureModal"
         },
         postNoteModal: function() {
-            var profile = Pump.principal,
-                lists = profile.lists,
-                following = profile.following;
-
-            following.getAll(function() {
-                Pump.fetchObjects([lists], function(err, objs) {
-                    Pump.showModal(Pump.PostNoteModal, {data: {user: Pump.principalUser,
-                                                               lists: lists,
-                                                               following: following}});
-                });
-            });
-
-            return false;
+            var view = this;
+            view.showPostingModal('#post-note-button', Pump.PostNoteModal);
         },
         postPictureModal: function() {
-            var profile = Pump.principal,
+            var view = this;
+            view.showPostingModal('#post-picture-button', Pump.PostPictureModal);
+        },
+        showPostingModal: function(btn, Cls) {
+            var view = this,
+                profile = Pump.principal,
                 lists = profile.lists,
-                following = profile.following;
+                startSpin = function() {
+                    view.$(btn).prop('disabled', true).spin(true);
+                },
+                stopSpin = function() {
+                    view.$(btn).prop('disabled', false).spin(false);
+                };
 
-            following.getAll(function() {
-                Pump.fetchObjects([lists], function(err, objs) {
-                    Pump.showModal(Pump.PostPictureModal, {data: {user: Pump.principalUser,
-                                                                  lists: lists,
-                                                                  following: following}});
-                });
+            startSpin();
+
+            Pump.fetchObjects([lists], function(err, objs) {
+                if (err) {
+                    view.showError(err);
+                    stopSpin();
+                } else {
+                    Pump.showModal(Cls, {data: {user: Pump.principalUser,
+                                                lists: lists},
+                                         ready: function() {
+                                             stopSpin();
+                                         }});
+                }
             });
 
             return false;
@@ -609,12 +620,6 @@
                         // Go home
                         Pump.router.navigate("/", true);
                     }
-                },
-                onError = function(jqXHR, textStatus, errorThrown) {
-                    showError(errorThrown);
-                },
-                showError = function(msg) {
-                    Pump.error(msg);
                 };
 
             options = {
@@ -624,7 +629,7 @@
                 type: "POST",
                 url: "/main/logout",
                 success: onSuccess,
-                error: onError
+                error: Pump.ajaxError
             };
 
             Pump.ajax(options);
@@ -673,12 +678,6 @@
                         // Go home
                         Pump.router.navigate("/", true);
                     }
-                },
-                onError = function(jqXHR, textStatus, errorThrown) {
-                    showError(errorThrown);
-                },
-                showError = function(msg) {
-                    Pump.error(msg);
                 };
 
             options = {
@@ -688,7 +687,7 @@
                 type: "POST",
                 url: "/main/logout",
                 success: onSuccess,
-                error: onError
+                error: Pump.ajaxError
             };
 
             // Don't use Pump.ajax; it uses client auth
@@ -793,13 +792,7 @@
                         Pump.ajax(options);
                     } else {
                         view.stopSpin();
-                        type = jqXHR.getResponseHeader("Content-Type");
-                        if (type && type.indexOf("application/json") !== -1) {
-                            response = JSON.parse(jqXHR.responseText);
-                            view.showError(response.error);
-                        } else {
-                            view.showError(errorThrown);
-                        }
+                        Pump.ajaxError(jqXHR, textStatus, errorThrown);
                     }
                 };
 
@@ -838,6 +831,7 @@
                 makeRequest = function(options) {
                     Pump.ensureCred(function(err, cred) {
                         if (err) {
+                            view.stopSpin();
                             view.showError("Couldn't get OAuth credentials. :(");
                         } else {
                             options.consumerKey = cred.clientID;
@@ -892,13 +886,7 @@
                         retries = 1;
                     } else {
                         view.stopSpin();
-                        type = jqXHR.getResponseHeader("Content-Type");
-                        if (type && type.indexOf("application/json") !== -1) {
-                            response = JSON.parse(jqXHR.responseText);
-                            view.showError(response.error);
-                        } else {
-                            view.showError(errorThrown);
-                        }
+                        Pump.ajaxError(jqXHR, textStatus, errorThrown);
                     }
                 };
 
@@ -1010,13 +998,7 @@
                         Pump.ajax(options);
                     } else {
                         view.stopSpin();
-                        type = jqXHR.getResponseHeader("Content-Type");
-                        if (type && type.indexOf("application/json") !== -1) {
-                            response = JSON.parse(jqXHR.responseText);
-                            view.showError(response.error);
-                        } else {
-                            view.showError(errorThrown);
-                        }
+                        Pump.ajaxError(jqXHR, textStatus, errorThrown);
                     }
                 };
 
@@ -1093,13 +1075,7 @@
                         Pump.ajax(options);
                     } else {
                         view.stopSpin();
-                        type = jqXHR.getResponseHeader("Content-Type");
-                        if (type && type.indexOf("application/json") !== -1) {
-                            response = JSON.parse(jqXHR.responseText);
-                            view.showError(response.error);
-                        } else {
-                            view.showError(errorThrown);
-                        }
+                        Pump.ajaxError(jqXHR, textStatus, errorThrown);
                     }
                 };
 
@@ -1369,11 +1345,14 @@
                 "activity-object-collection"],
         modelName: "activity",
         events: {
+            "mouseenter": "maybeShowExtraMenu",
+            "mouseleave": "maybeHideExtraMenu",
             "click .favorite": "favoriteObject",
             "click .unfavorite": "unfavoriteObject",
             "click .share": "shareObject",
             "click .unshare": "unshareObject",
-            "click .comment": "openComment"
+            "click .comment": "openComment",
+            "click .object-image": "openImage",
         },
         setupSubs: function() {
             var view = this,
@@ -1386,6 +1365,30 @@
             }
 
             view.replyStream = new Pump.ReplyStreamView({el: $el, model: model.object.replies});
+        },
+        maybeShowExtraMenu: function() {
+            var view = this,
+                activity = view.model,
+                principal = Pump.principal;
+
+            if (principal && activity.actor && principal.id == activity.actor.id) {
+                if (!view.extraMenu) {
+                    view.extraMenu = new Pump.ExtraMenu({model: activity.object, parent: view});
+                    view.extraMenu.show();
+                }
+            }
+        },
+        maybeHideExtraMenu: function() {
+            var view = this,
+                activity = view.model,
+                principal = Pump.principal;
+
+            if (principal && activity.actor && principal.id == activity.actor.id) {
+                if (view.extraMenu) {
+                    view.extraMenu.hide();
+                    view.extraMenu = null;
+                }
+            }
         },
         favoriteObject: function() {
             var view = this,
@@ -1428,8 +1431,11 @@
                     object: view.model.object.toJSON()
                 });
 
+            view.startSpin();
+
             Pump.newMajorActivity(act, function(err, act) {
                 if (err) {
+                    view.stopSpin();
                     view.showError(err);
                 } else {
                     view.$(".share")
@@ -1447,8 +1453,11 @@
                     object: view.model.object.toJSON()
                 });
 
+            view.startSpin();
+
             Pump.newMinorActivity(act, function(err, act) {
                 if (err) {
+                    view.stopSpin();
                     view.showError(err);
                 } else {
                     view.$(".unshare")
@@ -1471,6 +1480,31 @@
                     view.$(".replies").append(form.$el);
                 });
                 form.render();
+            }
+        },
+        openImage: function() {
+            var view = this,
+                model = view.model,
+                object = view.model.object,
+                modalView;
+            
+            if (object && object.get("fullImage")) {
+
+                modalView = new Pump.LightboxModal({data: {object: object}});
+
+                // When it's ready, show immediately
+
+                modalView.on("ready", function() {
+                    $(view.el).append(modalView.el);
+                    $(modalView.el).on("hidden", function() {
+                        $(modalView.el).remove();
+                    });
+                    $("#fullImageLightbox").lightbox();
+                });
+
+                // render it (will fire "ready")
+
+                modalView.render();
             }
         }
     });
@@ -1503,8 +1537,12 @@
                 Pump.body.endLoad();
             });
 
-            replies.getAll(function() {
-                full.render();
+            replies.getAll(function(err, data) {
+                if (err) {
+                    Pump.error(err);
+                } else {
+                    full.render();
+                }
             });
         },
         placeSub: function(aview, $el) {
@@ -1557,15 +1595,21 @@
         events: {
             "submit .post-comment": "saveComment"
         },
+        ready: function() {
+            var view = this;
+            view.$('textarea[name="content"]').wysihtml5({
+                customTemplates: Pump.wysihtml5Tmpl
+            });
+        },
         saveComment: function() {
             var view = this,
-                text = view.$('textarea[name="content"]').val(),
+                html = view.$('textarea[name="content"]').val(),
                 orig = view.options.original,
                 act = new Pump.Activity({
                     verb: "post",
                     object: {
                         objectType: "comment",
-                        content: Pump.htmlEncode(text)
+                        content: html
                     }
                 });
 
@@ -1575,6 +1619,7 @@
 
             Pump.newMinorActivity(act, function(err, act) {
                 if (err) {
+                    view.stopSpin();
                     view.showError(err);
                 } else {
                     var object = act.object,
@@ -1631,12 +1676,19 @@
                     object: view.model.toJSON()
                 });
 
+            view.startSpin();
+
             Pump.newMinorActivity(act, function(err, act) {
-                view.$(".favorite")
-                    .removeClass("favorite")
-                    .addClass("unfavorite")
-                    .html("Unlike <i class=\"icon-thumbs-down\"></i>");
-                Pump.addMinorActivity(act);
+                if (err) {
+                    view.showError(err);
+                } else {
+                    view.$(".favorite")
+                        .removeClass("favorite")
+                        .addClass("unfavorite")
+                        .html("Unlike <i class=\"icon-thumbs-down\"></i>");
+                    Pump.addMinorActivity(act);
+                }
+                view.stopSpin();
             });
         },
         unfavoriteObject: function() {
@@ -1645,6 +1697,8 @@
                     verb: "unfavorite",
                     object: view.model.toJSON()
                 });
+
+            view.startSpin();
 
             Pump.newMinorActivity(act, function(err, act) {
                 if (err) {
@@ -1656,6 +1710,7 @@
                         .html("Like <i class=\"icon-thumbs-up\"></i>");
                     Pump.addMinorActivity(act);
                 }
+                view.stopSpin();
             });
         },
         shareObject: function() {
@@ -1665,6 +1720,7 @@
                     object: view.model.toJSON()
                 });
 
+            view.startSpin();
             Pump.newMajorActivity(act, function(err, act) {
                 if (err) {
                     view.showError(err);
@@ -1675,6 +1731,7 @@
                         .html("Unshare <i class=\"icon-remove\"></i>");
                     Pump.addMajorActivity(act);
                 }
+                view.stopSpin();
             });
         },
         unshareObject: function() {
@@ -1684,6 +1741,7 @@
                     object: view.model.toJSON()
                 });
 
+            view.startSpin();
             Pump.newMinorActivity(act, function(err, act) {
                 if (err) {
                     view.showError(err);
@@ -1694,6 +1752,7 @@
                         .html("Share <i class=\"icon-share-alt\"></i>");
                     Pump.addMinorActivity(act);
                 }
+                view.stopSpin();
             });
         },
         openComment: function() {
@@ -1726,12 +1785,18 @@
                     object: view.model.toJSON()
                 });
 
+            view.startSpin();
             Pump.newMinorActivity(act, function(err, act) {
-                view.$(".favorite")
-                    .removeClass("favorite")
-                    .addClass("unfavorite")
-                    .html("Unlike <i class=\"icon-thumbs-down\"></i>");
-                Pump.addMinorActivity(act);
+                if (err) {
+                    view.showError(err);
+                } else {
+                    view.$(".favorite")
+                        .removeClass("favorite")
+                        .addClass("unfavorite")
+                        .html("Unlike <i class=\"icon-thumbs-down\"></i>");
+                    Pump.addMinorActivity(act);
+                }
+                view.stopSpin();
             });
             
             return false;
@@ -1743,6 +1808,7 @@
                     object: view.model.toJSON()
                 });
 
+            view.startSpin();
             Pump.newMinorActivity(act, function(err, act) {
                 if (err) {
                     view.showError(err);
@@ -1753,6 +1819,7 @@
                         .html("Like <i class=\"icon-thumbs-up\"></i>");
                     Pump.addMinorActivity(act);
                 }
+                view.stopSpin();
             });
             
             return false;
@@ -1776,6 +1843,7 @@
                     object: view.model.toJSON()
                 };
 
+            view.startSpin();
             Pump.newMinorActivity(act, function(err, act) {
                 if (err) {
                     view.showError(err);
@@ -1787,6 +1855,7 @@
                         .html("Stop following");
                     Pump.addMinorActivity(act);
                 }
+                view.stopSpin();
             });
         },
         stopFollowingProfile: function() {
@@ -1796,6 +1865,7 @@
                     object: view.model.toJSON()
                 };
 
+            view.startSpin();
             Pump.newMinorActivity(act, function(err, act) {
                 if (err) {
                     view.showError(err);
@@ -1807,6 +1877,7 @@
                         .html("Follow");
                     Pump.addMinorActivity(act);
                 }
+                view.stopSpin();
             });
         }
     });
@@ -1895,8 +1966,7 @@
                 attr: "userContent",
                 subView: "FollowersUserContent",
                 subOptions: {
-                    model: "followers",
-                    data: ["profile"]
+                    data: ["profile", "followers"]
                 }
             }
         },
@@ -1904,7 +1974,7 @@
             var view = this,
                 streams = {};
             if (view.userContent && view.userContent.peopleStreamView && view.userContent.peopleStreamView.model) {
-                streams.major = view.userContent.model;
+                streams.major = view.userContent.peopleStreamView.model;
             }
             return streams;
         }
@@ -1939,7 +2009,6 @@
         }
     });
 
-
     Pump.FollowingContent = Pump.ContentView.extend({
         templateName: 'following',
         parts: ["profile-block",
@@ -1960,8 +2029,7 @@
                 attr: "userContent",
                 subView: "FollowingUserContent",
                 subOptions: {
-                    model: "following",
-                    data: ["profile"]
+                    data: ["profile", "following"]
                 }
             }
         },
@@ -1969,7 +2037,7 @@
             var view = this,
                 streams = {};
             if (view.userContent && view.userContent.peopleStreamView && view.userContent.peopleStreamView.model) {
-                streams.major = view.userContent.model;
+                streams.major = view.userContent.peopleStreamView.model;
             }
             return streams;
         }
@@ -2131,7 +2199,7 @@
                 subView: "ListListContent",
                 subOptions: {
                     model: "list",
-                    data: ["profile", "members", "lists"]
+                    data: ["profile", "members", "lists", "list"]
                 }
             }
         }
@@ -2142,14 +2210,14 @@
         modelName: "list",
         parts: ["member-stream",
                 "member"],
-        setupSubs: function() {
-            var view = this,
-                list = view.model,
-                people = view.options.data.members,
-                $el = view.$("#member-stream");
-
-            if ($el && list && list.members) {
-                view.memberStreamView = new Pump.MemberStreamView({el: $el, model: people, data: {list: list}});
+        subs: {
+            "#member-stream": {
+                attr: "memberStreamView",
+                subView: "MemberStreamView",
+                subOptions: {
+                    model: "members",
+                    data: ["profile", "lists", "list"]
+                }
             }
         },
         events: {
@@ -2181,7 +2249,9 @@
                 person = Pump.principal;
 
             Pump.areYouSure("Delete the list '"+list.get("displayName")+"'?", function(err, sure) {
-                if (sure) {
+                if (err) {
+                    view.showError(err);
+                } else if (sure) {
                     Pump.router.navigate("/"+user.get("nickname")+"/lists", true);
                     list.destroy({success: function() {
                         lists.remove(list.id);
@@ -2202,7 +2272,7 @@
                 subView: "MemberView",
                 idAttr: "data-person-id",
                 subOptions: {
-                    data: ["list", "people"]
+                    data: ["list"]
                 }
             }
         }
@@ -2237,6 +2307,8 @@
                     }
                 };
 
+            view.startSpin();
+
             Pump.newMinorActivity(act, function(err, act) {
                 if (err) {
                     view.showError(err);
@@ -2246,6 +2318,7 @@
                     list.trigger("change");
                     Pump.addMinorActivity(act);
                 }
+                view.stopSpin();
             });
         }
     });
@@ -2264,7 +2337,7 @@
             if (view.$("#avatar-fineupload").length > 0) {
                 view.$("#avatar-fineupload").fineUploader({
                     request: {
-                        endpoint: "/main/upload"
+                        endpoint: "/main/upload-avatar"
                     },
                     text: {
                         uploadButton: '<i class="icon-upload icon-white"></i> Avatar file'
@@ -2304,7 +2377,7 @@
                             view.showError(err);
                             view.stopSpin();
                         } else {
-                            view.saveProfile(act.object.get("fullImage"));
+                            view.saveProfile(act.object);
                         }
                     });
                 }).on("error", function(event, id, fileName, reason) {
@@ -2322,7 +2395,10 @@
                          "summary": view.$('#bio').val()};
 
             if (img) {
-                props.image = img;
+                props.image = img.get("image");
+                props.pump_io = {
+                    fullImage: img.get("fullImage")
+                };
             }
 
             profile.save(props,
@@ -2441,12 +2517,19 @@
                     object: view.model.toJSON()
                 });
 
+            view.startSpin();
+
             Pump.newMinorActivity(act, function(err, act) {
-                view.$(".favorite")
-                    .removeClass("favorite")
-                    .addClass("unfavorite")
-                    .html("Unlike <i class=\"icon-thumbs-down\"></i>");
-                Pump.addMinorActivity(act);
+                if (err) {
+                    view.showError(err);
+                } else {
+                    view.$(".favorite")
+                        .removeClass("favorite")
+                        .addClass("unfavorite")
+                        .html("Unlike <i class=\"icon-thumbs-down\"></i>");
+                    Pump.addMinorActivity(act);
+                }
+                view.stopSpin();
             });
         },
         unfavoriteObject: function() {
@@ -2455,6 +2538,8 @@
                     verb: "unfavorite",
                     object: view.model.toJSON()
                 });
+
+            view.startSpin();
 
             Pump.newMinorActivity(act, function(err, act) {
                 if (err) {
@@ -2466,6 +2551,7 @@
                         .html("Like <i class=\"icon-thumbs-up\"></i>");
                     Pump.addMinorActivity(act);
                 }
+                view.stopSpin();
             });
         },
         shareObject: function() {
@@ -2474,6 +2560,8 @@
                     verb: "share",
                     object: view.model.toJSON()
                 });
+
+            view.startSpin();
 
             Pump.newMajorActivity(act, function(err, act) {
                 if (err) {
@@ -2485,6 +2573,7 @@
                         .html("Unshare <i class=\"icon-remove\"></i>");
                     Pump.addMajorActivity(act);
                 }
+                view.stopSpin();
             });
         },
         unshareObject: function() {
@@ -2493,6 +2582,8 @@
                     verb: "unshare",
                     object: view.model.toJSON()
                 });
+
+            view.startSpin();
 
             Pump.newMinorActivity(act, function(err, act) {
                 if (err) {
@@ -2504,6 +2595,7 @@
                         .html("Share <i class=\"icon-share-alt\"></i>");
                     Pump.addMinorActivity(act);
                 }
+                view.stopSpin();
             });
         },
         openComment: function() {
@@ -2626,11 +2718,13 @@
         parts: ["recipient-selector"],
         ready: function() {
             var view = this;
+
             view.$('#note-content').wysihtml5({
                 customTemplates: Pump.wysihtml5Tmpl
             });
-            view.$("#note-to").select2();
-            view.$("#note-cc").select2();
+
+            view.$("#note-to").select2(Pump.selectOpts());
+            view.$("#note-cc").select2(Pump.selectOpts());
         },
         events: {
             "click #send-note": "postNote"
@@ -2657,6 +2751,14 @@
                     });
                 };
 
+            if (_.isString(to)) {
+                to = to.split(",");
+            }
+
+            if (_.isString(cc)) {
+                cc = cc.split(",");
+            }
+
             if (to && to.length > 0) {
                 act.to = new Pump.ActivityObjectBag(_.map(to, strToObj));
             }
@@ -2670,9 +2772,10 @@
             Pump.newMajorActivity(act, function(err, act) {
                 if (err) {
                     view.showError(err);
-                } else {
-                    view.$el.modal('hide');
                     view.stopSpin();
+                } else {
+                    view.stopSpin();
+                    view.$el.modal('hide');
                     Pump.resetWysihtml5(view.$('#note-content'));
                     // Reload the current page
                     Pump.addMajorActivity(act);
@@ -2693,8 +2796,8 @@
         ready: function() {
             var view = this;
 
-            view.$("#picture-to").select2();
-            view.$("#picture-cc").select2();
+            view.$("#picture-to").select2(Pump.selectOpts());
+            view.$("#picture-cc").select2(Pump.selectOpts());
 
             view.$('#picture-description').wysihtml5({
                 customTemplates: Pump.wysihtml5Tmpl
@@ -2743,6 +2846,14 @@
                             object: responseJSON.obj
                         });
 
+                    if (_.isString(to)) {
+                        to = to.split(",");
+                    }
+
+                    if (_.isString(cc)) {
+                        cc = cc.split(",");
+                    }
+
                     if (to && to.length > 0) {
                         act.to = new Pump.ActivityObjectBag(_.map(to, strToObj));
                     }
@@ -2754,6 +2865,7 @@
                     Pump.newMajorActivity(act, function(err, act) {
                         if (err) {
                             view.showError(err);
+                            view.stopSpin();
                         } else {
                             view.$el.modal('hide');
                             view.stopSpin();
@@ -2837,6 +2949,7 @@
                 Pump.newMinorActivity(act, function(err, act) {
                     var aview;
                     if (err) {
+                        view.stopSpin();
                         view.showError(err);
                     } else {
 
@@ -2900,6 +3013,12 @@
         }
     });
 
+    Pump.LightboxModal = Pump.TemplateView.extend({
+        tagName: "div",
+        className: "modal-holder",
+        templateName: "lightbox-modal"
+    });
+
     Pump.BodyView = Backbone.View.extend({
         initialize: function(options) {
             _.bindAll(this, "navigateToHref");
@@ -2940,6 +3059,8 @@
 
             if ($(el).hasClass('save-continue-to')) {
                 Pump.saveContinueTo();
+            } else if ($(el).hasClass('add-continue')) {
+                Pump.continueTo = Pump.getContinueTo();
             }
 
             // For local <a>, use the router
@@ -3090,6 +3211,9 @@
         modalView.on("ready", function() {
             $("body").append(modalView.el);
             modalView.$el.modal('show');
+            if (options.ready) {
+                options.ready();
+            }
         });
 
         // render it (will fire "ready")
@@ -3123,5 +3247,164 @@
                        {data: {question: question},
                         callback: callback});
     };
+
+    Pump.selectOpts = function() {
+        var user = Pump.principalUser,
+            lists = Pump.principal.lists,
+            followersUrl = Pump.principal.followers.url(),
+            lastSearch = null;
+
+        return {
+            width: "90%",
+            multiple: true,
+            placeholder: "Search for a user or list",
+            minimumInputLength: 2,
+            initSelection: function(element, callback) {
+                var val = element.val(),
+                    strToObj = function(str) {
+                        var colon = str.indexOf(":"),
+                            type = str.substr(0, colon),
+                            id = str.substr(colon+1);
+                        return new Pump.ActivityObject({
+                            id: id,
+                            objectType: type
+                        });
+                    },
+                    selection = [],
+                    obj = (val && val.length > 0) ? strToObj(val) : null;
+
+                if (obj) {
+                    if (obj.id == "http://activityschema.org/collection/public") {
+                        selection.push({id: "collection:http://activityschema.org/collection/public",
+                                        text: "Public"});
+                    } else if (obj.id == followersUrl) {
+                        selection.push({id: "collection:" + followersUrl,
+                                        text: "Followers"});
+                    } else {
+                        // XXX: Get the object remotely
+                    }
+                }
+                callback(selection);
+            },
+            query: function(options) {
+                var term = options.term.toLowerCase(),
+                    lmatch = lists.items.filter(function(item) {
+                        return item.get("displayName").toLowerCase().indexOf(term) != -1;
+                    });
+
+                // Abort if something's already running
+
+                if (lastSearch) {
+                    lastSearch.abort();
+                    lastSearch = null;
+                }
+
+                Pump.ajax({
+                    type: "GET",
+                    dataType: "json",
+                    url: Pump.fullURL("/api/user/"+user.get("nickname")+"/following?q="+term),
+                    success: function(data) {
+                        var people = _.map(data.items, function(item) {
+                            return {id: item.objectType + ":" + item.id,
+                                    text: item.displayName};
+                        }),
+                            results = [];
+
+                        lastSearch = null;
+
+                        if ("Public".toLowerCase().indexOf(term) != -1) {
+                            results.push({id: "collection:http://activityschema.org/collection/public",
+                                          text: "Public"});
+                        }
+
+                        if ("Followers".toLowerCase().indexOf(term) != -1) {
+                            results.push({id: "collection:"+followersUrl,
+                                          text: "Followers"});
+                        }
+
+                        if (people.length > 0) {
+                            results.push({ text: "People", children: people });
+                        }
+
+                        if (lmatch.length > 0) {
+                            results.push({ text: "Lists",
+                                           children: _.map(lmatch, function(list) {
+                                               return {id: list.get("objectType") + ":" + list.id,
+                                                       text: list.get("displayName")};
+                                           })
+                                         });
+                        }
+
+                        options.callback({
+                            results: results
+                        });
+                    },
+                    error: function(jqxhr) {
+                        lastSearch = null;
+                        options.callback([]);
+                    },
+                    started: function(jqxhr) {
+                        lastSearch = jqxhr;
+                    }
+                });
+            }
+        };
+    };
+
+    Pump.ExtraMenu = Pump.TemplateView.extend({
+        parent: null,
+        templateName: "extra-menu",
+        events: {
+            "click .delete-object": "deleteObject"
+        },
+        initialize: function(options) {
+            var view = this;
+            if (options.parent) {
+                view.parent = options.parent;
+            }
+        },
+        show: function() {
+            var view = this;
+            view.render();
+        },
+        ready: function() {
+            var view = this;
+            if (view.parent && view.parent.$el) {
+                view.parent.$el.prepend(view.$el);
+            }
+        },
+        hide: function() {
+            var view = this;
+            view.$el.remove();
+        },
+        deleteObject: function() {
+            var view = this,
+                model = view.model,
+                act = new Pump.Activity({
+                    verb: "delete",
+                    object: view.model.toJSON()
+                }),
+                prompt = "Delete this " + model.get("objectType") + "?";
+
+            // Hide the dropdown, since we were selected
+            view.$el.dropdown('toggle');
+
+            Pump.areYouSure(prompt, function(err, sure) {
+                if (sure) {
+                    Pump.newMinorActivity(act, function(err, act) {
+                        if (err) {
+                            view.showError(err);
+                        } else {
+                            Pump.addMinorActivity(act);
+                            // Remove the parent from the list
+                            view.parent.$el.remove();
+                            // Remove the model from the client-side collection
+                            model.collection.remove(model.id);
+                        }
+                    });
+                }
+            });
+        }
+    });
 
 })(window._, window.$, window.Backbone, window.Pump);

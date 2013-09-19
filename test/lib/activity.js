@@ -61,8 +61,9 @@ var validActivityObject = function(obj) {
     assert.isString(obj.id);
     assert.include(obj, "objectType");
     assert.isString(obj.objectType);
-    assert.include(obj, "displayName");
-    assert.isString(obj.displayName);
+    if (_.has(obj, "displayName")) {
+	assert.isString(obj.displayName);
+    }
     if (_.has(obj, "published")) {
         validDate(obj.published);
     }
@@ -129,7 +130,14 @@ var validFeed = function(feed) {
     }
 };
 
+var validUser = function(user) {
+    assert.isString(user.nickname);
+    assert.isObject(user.profile);
+    validActivityObject(user.profile);
+};
+
 exports.validActivity       = validActivity;
 exports.validActivityObject = validActivityObject;
 exports.validMediaLink      = validMediaLink;
 exports.validFeed           = validFeed;
+exports.validUser           = validUser;
