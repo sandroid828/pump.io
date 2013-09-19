@@ -49,11 +49,15 @@ thing much more enjoyable.
 
 ### Prerequisites
 
-You'll need three things to get started:
+You'll need four things to get started:
 
 * node.js 0.8.0 or higher
 * npm 1.1.0 or higher
 * A database server (see below)
+* The `graphicsmagick` package with the `gm` command
+
+Note that the requirement to have `gm` available is new for 0.3.0; if
+you're upgrading, you need to install it.
 
 ### Install with npm
 
@@ -70,7 +74,7 @@ If you want to set up the software in its own directory, you can clone
 the git repository, so:
 
     git clone https://github.com/e14n/pump.io.git
-    
+
 You can then install the dependencies using `npm`:
 
     cd pump.io
@@ -79,7 +83,7 @@ You can then install the dependencies using `npm`:
 To test the install, run:
 
     npm test
-    
+
 ### Database setup
 
 pump.io uses [databank](https://github.com/evanp/databank)
@@ -134,10 +138,10 @@ Here are the main configuration keys.
    should listen on 80 or 443 if you're going to have anyone use this.
 * *urlPort* Port to use for generating URLs. Defaults to the same as `port`,
   but if you're insisting on proxying behind Apache or whatever despite
-  warnings not to, you can use this. 
+  warnings not to, you can use this.
 * *secret* A session-generating secret, server-wide password.
-* *noweb* Hide the Web interface. Since it's disabled for this release,
-  this shouldn't cause you any problems.
+* *noweb* Hide the Web interface. Defaults to `false`. Set this to something
+  truthy to disable the Web interface.
 * *site* Name of the server, like "My great social service".
 * *owner* Name of owning entity, if you want to link to it.
 * *ownerURL* URL of owning entity, if you want to link to it.
@@ -154,7 +158,7 @@ Here are the main configuration keys.
 * *cert* If you're using SSL, the path to the server cert, like
    "/etc/ssl/private/myserver.crt".
 * *uploaddir* If you want to enable file uploads, set this to the
-  full path of a local directory. It should be writeable and readable by the 
+  full path of a local directory. It should be writeable and readable by the
   'serverUser'.
 * *debugClient* For developers, if you're debugging the Web interface
   and you want to use the non-minified version of the JavaScript libraries,
@@ -189,6 +193,25 @@ Here are the main configuration keys.
   it's a smart idea.
 * *smtpusessl* Only use SSL with the SMTP server. Defaults to `false`. You may need to change
   the `smtpport` value if you set this.
+* *smtptimeout* Timeout for connecting to the SMTP server in milliseconds. Defaults to `30000`.
+  Change this if... I dunno. I see no reason to change this.
+* *smtpfrom* Email address to use in the "From:" header of outgoing notifications. Defaults to 'no-reply@'
+  plus the site hostname.
+* *compress* Use gzip or deflate to compress text output. This can cut down on network
+  transfers considerably at the expense of memory and CPU on the server. Defaults to `false`.
+* *children* Number of children to run. Defaults to 1 for some kinds of DBs, number of CPUS - 1 for others.
+* *clients*. You can pre-configure some OAuth credentials if you want to have a replicable
+  configuration (say, for test scripts or development environments). This setting is
+  an array of objects, each of which has a 'client_id' and 'client_secret' property, and
+  an optional 'title' and 'description' object. Most people don't need this. Default is an empty list.
+* *sockjs* Use [SockJS-node](https://github.com/sockjs/sockjs-node) to provide a realtime connection. Defaults
+  to `true`.
+* *cleanupSession* Time interval to clean up sessions (in ms). These are staggered a bit if you have
+  more than one child process running, to spread them out a bit. Defaults to 1200000, or 20 minutes.
+* *cleanupNonce* Time interval to clean up OAuth nonces (in ms). Staggered.
+  Defaults to 1200000, or 20 minutes.
+* *favicon* Local filesystem path to the favicon.ico file to use. This will be served as "/favicon.ico"
+  by the server. By default, uses public/images/favicon.ico.
 
 ### Web server proxy
 

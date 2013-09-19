@@ -297,7 +297,7 @@
                 unique;
 
             if (_.isArray(props)) {
-                Pump.debug("Merging items of " + items.url() + "of length " + items.length + " with array of length " + props.length);
+                Pump.debug("Merging items of " + items.url() + " of length " + items.length + " with array of length " + props.length);
                 unique = props.map(function(item) {
                     return items.model.unique(item);
                 });
@@ -349,28 +349,64 @@
                 return str.get('url');
             }
         },
-        nextLink: function() {
-            var str = this;
+        nextLink: function(count) {
+            var str = this,
+                url,
+                item;
+
+            if (_.isUndefined(count)) {
+                count = 20;
+            }
             if (str.has('links') && _.has(str.get('links'), 'next')) {
-                return str.get('links').next.href;
-            } else {
-                return null;
-            }
-        },
-        prevLink: function() {
-            var str = this;
-            if (str.has('links') && _.has(str.get('links'), 'prev')) {
-                return str.get('links').prev.href;
+                url = str.get('links').next.href;
             } else if (str.items && str.items.length > 0) {
-                return str.url() + "?since=" + str.items.at(0).id;
+                item = str.items.at(str.items.length-1);
+                url = str.url() + "?before=" + item.id + "&type=" + item.get("objectType");
             } else {
-                return null;
+                url = null;
             }
+
+            if (url && count != 20) {
+                url = url + "&count=" + count;
+            }
+            
+            return url;
         },
-        getPrev: function(callback) { // Get stuff later than the current group
+        prevLink: function(count) {
+            var str = this,
+                url,
+                item;
+
+            if (_.isUndefined(count)) {
+                count = 20;
+            }
+            if (str.has('links') && _.has(str.get('links'), 'prev')) {
+                url = str.get('links').prev.href;
+            } else if (str.items && str.items.length > 0) {
+                item = str.items.at(0);
+                url = str.url() + "?since=" + item.id + "&type=" + item.get("objectType");
+            } else {
+                url = null;
+            }
+
+            if (url && count != 20) {
+                url = url + "&count=" + count;
+            }
+            
+            return url;
+        },
+        getPrev: function(count, callback) { // Get stuff later than the current group
             var stream = this,
-                prevLink = stream.prevLink(),
+                prevLink,
                 options;
+
+            if (!callback) {
+                // This can also be undefined, btw
+                callback = count;
+                count    = 20;
+            }
+
+            prevLink = stream.prevLink(count);
 
             if (!prevLink) {
                 if (_.isFunction(callback)) {
@@ -384,7 +420,7 @@
                 dataType: "json",
                 url: prevLink,
                 success: function(data) {
-                    if (data.items) {
+                    if (data.items && data.items.length > 0) {
                         if (stream.items) {
                             stream.items.add(data.items, {at: 0});
                         } else {
@@ -395,7 +431,7 @@
                         if (stream.has('links')) {
                             stream.get('links').prev = data.links.prev;
                         } else {
-                            stream.set('links', data.links);
+                            stream.set('links', {"prev": {"href": data.links.prev.href}});
                         }
                     }
                     if (_.isFunction(callback)) {
@@ -404,7 +440,7 @@
                 },
                 error: function(jqxhr) {
                     if (_.isFunction(callback)) {
-                        callback(new Error("Failed getting more items for " + stream.url()), null);
+                        callback(Pump.jqxhrError(jqxhr), null);
                     }
                 }
             };
@@ -412,10 +448,18 @@
             Pump.ajax(options);
 
         },
-        getNext: function(callback) { // Get stuff earlier than the current group
+        getNext: function(count, callback) { // Get stuff earlier than the current group
             var stream = this,
-                nextLink = stream.nextLink(),
+                nextLink,
                 options;
+
+            if (!callback) {
+                // This can also be undefined, btw
+                callback = count;
+                count    = 20;
+            }
+
+            nextLink = stream.nextLink(count);
 
             if (!nextLink) {
                 if (_.isFunction(callback)) {
@@ -437,11 +481,17 @@
                             stream.items = new stream.itemsClass(data.items);
                         }
                     }
-                    if (data.links && data.links.next && data.links.next.href) {
-                        if (stream.has('links')) {
-                            stream.get('links').next = data.links.next;
+                    if (data.links) {
+                        if (data.links.next && data.links.next.href) {
+                            if (stream.has('links')) {
+                                stream.get('links').next = data.links.next;
+                            } else {
+                                stream.set('links', {"next": {"href": data.links.next.href}});
+                            }
                         } else {
-                            stream.set('links', data.links);
+                            if (stream.has('links')) {
+                                delete stream.get('links').next;
+                            }
                         }
                     }
                     if (_.isFunction(callback)) {
@@ -450,18 +500,48 @@
                 },
                 error: function(jqxhr) {
                     if (_.isFunction(callback)) {
-                        callback(new Error("Failed getting more items for " + stream.url()), null);
+                        callback(Pump.jqxhrError(jqxhr), null);
                     }
                 }
             };
 
             Pump.ajax(options);
         },
+        getAllNext: function(callback) {
+            var stream = this;
+
+            stream.getNext(stream.maxCount(), function(err, data) {
+                if (err) {
+                    callback(err);
+                } else if (data.items && data.items.length > 0 && stream.items.length < stream.get("totalItems")) {
+                    // recurse
+                    stream.getAllNext(callback);
+                } else {
+                    callback(null);
+                }
+            });
+        },
+        getAllPrev: function(callback) {
+            var stream = this;
+
+            stream.getPrev(stream.maxCount(), function(err, data) {
+                if (err) {
+                    callback(err);
+                } else if (data.items && data.items.length > 0 && stream.items.length < stream.get("totalItems")) {
+                    // recurse
+                    stream.getAllPrev(callback);
+                } else {
+                    callback(null);
+                }
+            });
+        },
         getAll: function(callback) { // Get stuff later than the current group
             var stream = this,
                 url = stream.url(),
                 count,
-                options;
+                options,
+                nl,
+                pl;
 
             if (!url) {
                 if (_.isFunction(callback)) {
@@ -470,46 +550,95 @@
                 return;
             }
 
-            if (_.isNumber(stream.get('totalItems'))) {
-                count = Math.min(stream.get('totalItems'), 200);
+            pl = stream.prevLink();
+            nl = stream.nextLink();
+
+            if (nl || pl) {
+                var ndone = false,
+                    nerror = false,
+                    pdone = false,
+                    perror = false;
+
+                stream.getAllNext(function(err) {
+                    ndone = true;
+                    if (err) {
+                        nerror = true;
+                        if (!perror) {
+                            callback(err);
+                        }
+                    } else {
+                        if (pdone) {
+                            callback(null);
+                        }
+                    }
+                });
+
+                stream.getAllPrev(function(err) {
+                    pdone = true;
+                    if (err) {
+                        perror = true;
+                        if (!nerror) {
+                            callback(err);
+                        }
+                    } else {
+                        if (ndone) {
+                            callback(null);
+                        }
+                    }
+                });
+
+            } else {
+                
+                count = stream.maxCount();
+
+                options = {
+                    type: "GET",
+                    dataType: "json",
+                    url: url + "?count=" + count,
+                    success: function(data) {
+                        if (data.items) {
+                            if (stream.items) {
+                                stream.items.add(data.items);
+                            } else {
+                                stream.items = new stream.itemsClass(data.items);
+                            }
+                        }
+                        if (data.links && data.links.next && data.links.next.href) {
+                            if (stream.has('links')) {
+                                stream.get('links').next = data.links.next;
+                            } else {
+                                stream.set('links', data.links);
+                            }
+                        } else {
+                            // XXX: end-of-collection indicator?
+                        }
+                        stream.trigger("getall");
+                        if (_.isFunction(callback)) {
+                            callback(null, data);
+                        }
+                    },
+                    error: function(jqxhr) {
+                        if (_.isFunction(callback)) {
+                            callback(Pump.jqxhrError(jqxhr), null);
+                        }
+                    }
+                };
+
+                Pump.ajax(options);
+            }
+        },
+        maxCount: function() {
+            var stream = this,
+                count,
+                total = stream.get('totalItems');
+
+            if (_.isNumber(total)) {
+                count = Math.min(total, 200);
             } else {
                 count = 200;
             }
 
-            options = {
-                type: "GET",
-                dataType: "json",
-                url: url + "?count=" + count,
-                success: function(data) {
-                    if (data.items) {
-                        if (stream.items) {
-                            stream.items.add(data.items);
-                        } else {
-                            stream.items = new stream.itemsClass(data.items);
-                        }
-                    }
-                    if (data.links && data.links.next && data.links.next.href) {
-                        if (stream.has('links')) {
-                            stream.get('links').next = data.links.next;
-                        } else {
-                            stream.set('links', data.links);
-                        }
-                    } else {
-                        // XXX: end-of-collection indicator?
-                    }
-                    stream.trigger("getall");
-                    if (_.isFunction(callback)) {
-                        callback(null, data);
-                    }
-                },
-                error: function(jqxhr) {
-                    if (_.isFunction(callback)) {
-                        callback(new Error("Failed getting all items for " + stream.url()), null);
-                    }
-                }
-            };
-
-            Pump.ajax(options);
+            return count;
         },
         toJSONRef: function() {
             var str = this;
@@ -606,6 +735,8 @@
                 options.at = 0;
             }
             Backbone.Collection.prototype.add.apply(this, [models, options]);
+            // Don't apply changes yet.
+            // this.applyChanges(models);
         },
         comparator: function(first, second) {
             var d1 = first.pubDate(),
@@ -617,6 +748,65 @@
             } else {
                 return 0;
             }
+        },
+        applyChanges: function(models) {
+            var items = this;
+            if (!_.isArray(models)) {
+                models = [models];
+            }
+            _.each(models, function(act) {
+                if (!(act instanceof Pump.Activity)) {
+                    act = Pump.Activity.unique(act);
+                }
+                switch (act.get("verb")) {
+                case "post":
+                case "create":                    
+                    if (act.object.inReplyTo) {
+                        if (!act.object.author) {
+                            act.object.author = act.actor;
+                        }
+                        if (!act.object.inReplyTo.replies) {
+                            act.object.inReplyTo.replies = new Pump.ActivityObjectStream();
+                        }
+
+                        if (!act.object.inReplyTo.replies.items) {
+                            act.object.inReplyTo.replies.items = new Pump.ActivityObjectItems();
+                        }
+                        act.object.inReplyTo.replies.items.add(act.object);
+                    }
+                    break;
+                case "like":
+                case "favorite":
+                    if (!act.object.likes) {
+                        act.object.likes = new Pump.ActivityObjectStream();
+                    }
+                    if (!act.object.likes.items) {
+                        act.object.likes.items = new Pump.ActivityObjectItems();
+                    }
+                    act.object.likes.items.add(act.actor);
+                    break;
+                case "unlike":
+                case "unfavorite":
+                    if (act.object.likes && act.object.likes.items) {
+                        act.object.likes.items.remove(act.actor);
+                    }
+                    break;
+                case "share":
+                    if (!act.object.shares) {
+                        act.object.shares = new Pump.ActivityObjectStream();
+                    }
+                    if (!act.object.shares.items) {
+                        act.object.shares.items = new Pump.ActivityObjectItems();
+                    }
+                    act.object.shares.items.add(act.actor);
+                    break;
+                case "unshare":
+                    if (act.object.shares && act.object.shares.items) {
+                        act.object.shares.items.remove(act.actor);
+                    }
+                    break;
+                }
+            });
         }
     });
 
@@ -706,7 +896,25 @@
     });
 
     Pump.PeopleStream = Pump.ActivityObjectStream.extend({
-        itemsClass: Pump.PeopleItems
+        itemsClass: Pump.PeopleItems,
+        nextLink: function() {
+            var str = this,
+                url;
+            url = Pump.ActivityObjectStream.prototype.nextLink.apply(str, arguments);
+            if (url && url.indexOf("&type=person") == -1) {
+                url = url + "&type=person";
+            }
+            return url;
+        },
+        prevLink: function() {
+            var str = this,
+                url;
+            url = Pump.ActivityObjectStream.prototype.prevLink.apply(str, arguments);
+            if (url && url.indexOf("&type=person") == -1) {
+                url = url + "&type=person";
+            }
+            return url;
+        }
     });
 
     Pump.User = Pump.Model.extend({

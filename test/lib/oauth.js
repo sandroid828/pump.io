@@ -29,11 +29,11 @@ var cp = require("child_process"),
 
 var OAuthError = function(obj) {
     Error.captureStackTrace(this, OAuthError);
-    this.name = "OAuthError";  
+    this.name = "OAuthError";
     _.extend(this, obj);
 };
 
-OAuthError.prototype = new Error();  
+OAuthError.prototype = new Error();
 OAuthError.prototype.constructor = OAuthError;
 
 OAuthError.prototype.toString = function() {
@@ -85,15 +85,31 @@ var requestToken = function(cl, hostname, port, cb) {
     });
 };
 
-var newClient = function(hostname, port, cb) {
+var newClient = function(hostname, port, path, cb) {
 
-    if (!port) {
-        cb = hostname;
+    var rel = "/api/client/register",
+        full;
+
+    // newClient(hostname, port, cb)
+    if (!cb) {
+	cb = path;
+	path = "";
+    }
+
+    // newClient(cb)
+    if (!cb) {
+	cb = hostname;
         hostname = "localhost";
         port = 4815;
     }
 
-    httputil.post(hostname, port, "/api/client/register", {type: "client_associate"}, function(err, res, body) {
+    if (path) {
+	full = path + rel;
+    } else {
+	full = rel;
+    }
+
+    httputil.post(hostname, port, full, {type: "client_associate"}, function(err, res, body) {
         var cl;
         if (err) {
             cb(err, null);
@@ -207,10 +223,18 @@ var accessToken = function(cl, user, hostname, port, cb) {
     );
 };
 
-var register = function(cl, nickname, password, hostname, port, callback) {
-    var proto;
+var register = function(cl, nickname, password, hostname, port, path, callback) {
+    var proto, full, rel = "/api/users";
 
-    if (!port) {
+    // register(cl, nickname, hostname, port, callback)
+
+    if (!callback) {
+	callback = path;
+	path = null;
+    }
+
+    // register(cl, nickname, callback)
+    if (!callback) {
         callback = hostname;
         hostname = "localhost";
         port = 4815;
@@ -218,8 +242,14 @@ var register = function(cl, nickname, password, hostname, port, callback) {
 
     proto = (port === 443) ? "https" : "http";
 
-    httputil.postJSON(proto+"://"+hostname+":"+port+"/api/users", 
-                      {consumer_key: cl.client_id, consumer_secret: cl.client_secret}, 
+    if (path) {
+	full = path + rel;
+    } else {
+	full = rel;
+    }
+
+    httputil.postJSON(proto+"://"+hostname+":"+port+full,
+                      {consumer_key: cl.client_id, consumer_secret: cl.client_secret},
                       {nickname: nickname, password: password},
                       function(err, body, res) {
                           callback(err, body);
@@ -237,8 +267,8 @@ var registerEmail = function(cl, nickname, password, email, hostname, port, call
 
     proto = (port === 443) ? "https" : "http";
 
-    httputil.postJSON(proto+"://"+hostname+":"+port+"/api/users", 
-                      {consumer_key: cl.client_id, consumer_secret: cl.client_secret}, 
+    httputil.postJSON(proto+"://"+hostname+":"+port+"/api/users",
+                      {consumer_key: cl.client_id, consumer_secret: cl.client_secret},
                       {nickname: nickname, password: password, email: email},
                       function(err, body, res) {
                           callback(err, body);
@@ -254,7 +284,7 @@ var newCredentials = function(nickname, password, hostname, port, cb) {
         hostname = "localhost";
         port = 4815;
     }
-    
+
     Step(
         function() {
             newClient(hostname, port, this);
@@ -339,13 +369,13 @@ var setupApp = function(port, hostname, callback) {
 
 var setupAppConfig = function(config, callback) {
 
-    var prop, args = [], credwait = {}; 
+    var prop, args = [], credwait = {}, objwait = {};
 
     config.port = config.port || 4815;
     config.hostname = config.hostname || "localhost";
 
     for (prop in config) {
-        args.push(prop + "=" + config[prop]);
+        args.push(prop + "=" + JSON.stringify(config[prop]));
     }
 
     var child = cp.fork(path.join(__dirname, "app.js"), args);
@@ -360,21 +390,44 @@ var setupAppConfig = function(config, callback) {
             }, 30000);
             credwait[webfinger] = {callback: callback, timeout: timeout};
             child.send({cmd: "killcred", webfinger: webfinger});
+        },
+        changeObject: function(obj, callback) {
+            var timeout = setTimeout(function() {
+                callback(new Error("Timed out waiting for object change."));
+            }, 30000);
+            objwait[obj.id] = {callback: callback, timeout: timeout};
+            child.send({cmd: "changeobject", object: obj});
         }
     };
 
+    child.on("error", function(err) {
+        callback(err, null);
+    });
+
     child.on("message", function(msg) {
-        if (msg.cmd == "listening") {
+        switch (msg.cmd) {
+        case "listening":
             callback(null, dummy);
-        } else if (msg.cmd == "error") {
+            break;
+        case "error":
             callback(msg.value, null);
-        } else if (msg.cmd == "credkilled") {
+            break;
+        case "credkilled":
             clearTimeout(credwait[msg.webfinger].timeout);
             if (msg.error) {
                 credwait[msg.webfinger].callback(new Error(msg.error));
             } else {
                 credwait[msg.webfinger].callback(null);
             }
+            break;
+        case "objectchanged":
+            clearTimeout(objwait[msg.id].timeout);
+            if (msg.error) {
+                objwait[msg.id].callback(new Error(msg.error));
+            } else {
+                objwait[msg.id].callback(null);
+            }
+            break;
         }
     });
 };

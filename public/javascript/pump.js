@@ -106,7 +106,7 @@ if (!window.Pump) {
                 var nickname, pair;
 
                 if (err) {
-                    Pump.error(err.message);
+                    Pump.error(err);
                     return;
                 }
 
@@ -202,10 +202,34 @@ if (!window.Pump) {
     // send them here and I'll figure it out.
 
     Pump.error = function(err) {
-        if (window.console) {
-            console.log(err);
+        var msg;
+
+        if (_.isString(err)) {
+            msg = err;
+        } else if (_.isObject(err)) {
+            msg = err.message;
             if (err.stack) {
                 console.log(err.stack);
+            }
+        } else {
+            msg = "An error occurred.";
+        }
+
+        console.log(msg);
+        
+        if (Pump.body && Pump.body.nav) {
+            var $nav = Pump.body.nav.$el,
+                $alert = $("#error-popup");
+
+            if ($alert.length === 0) {
+                $alert = $('<div id="error-popup" class="alert-error" style="display: none; margin-top: 0px; text-align: center">'+
+                           '<button type="button" class="close" data-dismiss="alert">&times;</button>'+
+                           '<span class="error-message">'+msg+'</span>'+
+                           '</div>');
+                $nav.after($alert);
+                $alert.slideDown('fast');
+            } else {
+                $(".error-message", $alert).text(msg);
             }
         }
     };
@@ -295,7 +319,18 @@ if (!window.Pump) {
                         if (err) {
                             onError(null, null, err);
                         } else {
-                            onSuccess();
+                            if (obj.items.length < 20 &&
+                                _.isFunction(obj.nextLink) && obj.nextLink()) {
+                                obj.getNext(function(err) {
+                                    if (err) {
+                                        onError(null, null, err);
+                                    } else {
+                                        onSuccess();
+                                    }
+                                });
+                            } else {
+                                onSuccess();
+                            }
                         }
                     });
                 } else {
@@ -394,9 +429,13 @@ if (!window.Pump) {
     };
 
     Pump.ajax = function(options) {
+        var jqxhr;
         // For remote users, we use session auth
         if (Pump.principal && !Pump.principalUser && options.type == "GET") {
-            $.ajax(options);
+            jqxhr = $.ajax(options);
+            if (_.isFunction(options.started)) {
+                options.started(jqxhr);
+            }
         } else {
             Pump.ensureCred(function(err, cred) {
                 var pair;
@@ -413,7 +452,10 @@ if (!window.Pump) {
                     }
 
                     options = Pump.oauthify(options);
-                    $.ajax(options);
+                    jqxhr = $.ajax(options);
+                    if (_.isFunction(options.started)) {
+                        options.started(jqxhr);
+                    }
                 }
             });
         }
@@ -438,7 +480,7 @@ if (!window.Pump) {
                 didScroll = false;
                 if ($(window).scrollTop() >= $(document).height() - $(window).height() - 10) {
                     streams = Pump.getStreams();
-                    if (streams.major && streams.major.nextLink) {
+                    if (streams.major && streams.major.nextLink()) {
                         Pump.body.startLoad();
                         streams.major.getNext(function(err) {
                             Pump.body.endLoad();
@@ -498,6 +540,7 @@ if (!window.Pump) {
                                                                   lists: Pump.ActivityObjectStream}},
                 ".user-list": {View: Pump.ListContent, models: {profile: Pump.Person,
                                                                 lists: Pump.ActivityObjectStream,
+                                                                members: Pump.PeopleStream,
                                                                 list: Pump.ActivityObject}}
             },
             selector,
@@ -556,17 +599,18 @@ if (!window.Pump) {
 
     Pump.addToStream = function(stream, act, callback) {
         stream.items.create(act, {
+            wait: true,
             success: function(act) {
                 callback(null, act);
             },
-            error: function(jqXHR, textStatus, errorThrown) {
+            error: function(model, xhr, options) {
                 var type, response;
-                type = jqXHR.getResponseHeader("Content-Type");
+                type = xhr.getResponseHeader("Content-Type");
                 if (type && type.indexOf("application/json") !== -1) {
-                    response = JSON.parse(jqXHR.responseText);
+                    response = JSON.parse(xhr.responseText);
                     callback(new Error(response.error), null);
                 } else {
-                    callback(new Error(errorThrown), null);
+                    callback(new Error("Error saving activity: " + model.id), null);
                 }
             }
         });
@@ -598,7 +642,27 @@ if (!window.Pump) {
     };
 
     Pump.setTitle = function(title) {
-        $("title").html(title + " - " + Pump.config.site);
+        // We don't accept HTML in title or site name; just text
+        $("title").text(title + " - " + Pump.config.site);
+    };
+
+    Pump.ajaxError = function(jqXHR, textStatus, errorThrown) {
+        Pump.error(Pump.jqxhrError(jqXHR));
+    };
+
+    Pump.jqxhrError = function(jqxhr) {
+        var type = jqxhr.getResponseHeader("Content-Type"),
+            response;
+        if (type && type.indexOf("application/json") !== -1) {
+            try {
+                response = JSON.parse(jqxhr.responseText);
+                Pump.error(new Error(response.error));
+            } catch (err) {
+                Pump.error(new Error(jqxhr.status + ": " + jqxhr.statusText));
+            }
+        } else {
+            Pump.error(new Error(jqxhr.status + ": " + jqxhr.statusText));
+        }
     };
 
 })(window._, window.$, window.Backbone, window.Pump);
