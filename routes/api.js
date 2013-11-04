@@ -69,6 +69,7 @@ var databank = require("databank"),
     setPrincipal = authc.setPrincipal,
     fileContent = mw.fileContent,
     requestObject = omw.requestObject,
+    requestObjectByID = omw.requestObjectByID,
     authorOnly = omw.authorOnly,
     authorOrRecipient = omw.authorOrRecipient,
     NoSuchThingError = databank.NoSuchThingError,
@@ -149,11 +150,44 @@ var addRoutes = function(app) {
         app.post("/api/user/:nickname/uploads", userWriteOAuth, reqUser, sameUser, fileContent, newUpload);
     }
 
+    // Global user list
+
+    app.get("/api/users", smw, anyReadAuth, listUsers);
+    app.post("/api/users", noneWriteOAuth, reqGenerator, createUser);
+
+    // Info about yourself
+
+    app.get("/api/whoami", smw, userReadAuth, whoami);
+
     // Activities
 
     app.get("/api/activity/:uuid", smw, anyReadAuth, reqActivity, actorOrRecipient, getActivity);
     app.put("/api/activity/:uuid", userWriteOAuth, reqActivity, actorOnly, putActivity);
     app.del("/api/activity/:uuid", userWriteOAuth, reqActivity, actorOnly, delActivity);
+
+    // Collection members
+
+    app.get("/api/collection/:uuid/members", smw, anyReadAuth, requestCollection, authorOrRecipient, collectionMembers);
+    app.post("/api/collection/:uuid/members", userWriteOAuth, requestCollection, authorOnly, reqGenerator, newMember);
+
+    // Group feeds
+
+    app.get("/api/group/:uuid/members", smw, anyReadAuth, requestGroup, authorOrRecipient, groupMembers);
+    app.get("/api/group/:uuid/inbox", smw, anyReadAuth, requestGroup, authorOrRecipient, groupInbox);
+    app.get("/api/group/:uuid/documents", smw, anyReadAuth, requestGroup, authorOrRecipient, groupDocuments);
+    app.post("/api/group/:uuid/inbox", remoteWriteOAuth, requestGroup, postToGroupInbox);
+
+    // Group feeds with foreign ID
+
+    app.get("/api/group/members", smw, anyReadAuth, requestGroupByID, authorOrRecipient, groupMembers);
+    app.get("/api/group/inbox", smw, anyReadAuth, requestGroupByID, authorOrRecipient, groupInbox);
+    app.get("/api/group/documents", smw, anyReadAuth, requestGroupByID, authorOrRecipient, groupDocuments);
+
+    // Object feeds with foreign ID
+
+    app.get("/api/:type/likes", smw, anyReadAuth, requestObjectByID, authorOrRecipient, objectLikes);
+    app.get("/api/:type/replies", smw, anyReadAuth, requestObjectByID, authorOrRecipient, objectReplies);
+    app.get("/api/:type/shares", smw, anyReadAuth, requestObjectByID, authorOrRecipient, objectShares);
 
     // Other objects
 
@@ -165,26 +199,9 @@ var addRoutes = function(app) {
     app.get("/api/:type/:uuid/replies", smw, anyReadAuth, requestObject, authorOrRecipient, objectReplies);
     app.get("/api/:type/:uuid/shares", smw, anyReadAuth, requestObject, authorOrRecipient, objectShares);
 
-    // Global user list
+    // With foreign IDs; needs to be late for better matches
 
-    app.get("/api/users", smw, anyReadAuth, listUsers);
-    app.post("/api/users", noneWriteOAuth, reqGenerator, createUser);
-
-    // Collection members
-
-    app.get("/api/collection/:uuid/members", smw, anyReadAuth, requestCollection, authorOrRecipient, collectionMembers);
-    app.post("/api/collection/:uuid/members", userWriteOAuth, requestCollection, authorOnly, reqGenerator, newMember);
-
-    // Group feeds (members and inbox)
-
-    app.get("/api/group/:uuid/members", smw, anyReadAuth, requestGroup, authorOrRecipient, groupMembers);
-    app.get("/api/group/:uuid/inbox", smw, anyReadAuth, requestGroup, authorOrRecipient, groupInbox);
-    app.get("/api/group/:uuid/documents", smw, anyReadAuth, requestGroup, authorOrRecipient, groupDocuments);
-    app.post("/api/group/:uuid/inbox", remoteWriteOAuth, requestGroup, postToGroupInbox);
-
-    // Info about yourself
-
-    app.get("/api/whoami", smw, userReadAuth, whoami);
+    app.get("/api/:type", smw, anyReadAuth, requestObjectByID, authorOrRecipient, getObject);
 };
 
 // XXX: use a common function instead of faking up params
@@ -197,6 +214,11 @@ var requestCollection = function(req, res, next) {
 var requestGroup = function(req, res, next) {
     req.params.type = "group";
     requestObject(req, res, next);
+};
+
+var requestGroupByID = function(req, res, next) {
+    req.params.type = "group";
+    requestObjectByID(req, res, next);
 };
 
 var personType = function(req, res, next) {
